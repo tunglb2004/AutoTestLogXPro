@@ -1,0 +1,37 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+import { test, expect } from '../../../src/fixtures/seed.fixture';
+import { body, data, items, jsonPart } from '../../../src/api/http.client';
+import { badTokens } from '../../../src/fixtures/auth.fixture';
+import { apiError, apiSuccess, hasNoStacktrace } from '../../../src/api/schemas/common.schema';
+import { sha256 } from '../../../src/utils/file-check';
+import { malformedJson } from '../../../src/data/payloads';
+import * as F from '../../../src/data/file.factory';
+import * as L from '../../../src/data/lead.factory';
+import * as C from '../../../src/data/contract.factory';
+import * as K from '../../../src/data/customer.factory';
+import * as V from '../../../src/data/contractor.factory';
+import * as VC from '../../../src/data/contractor-contract.factory';
+import * as P from '../../../src/data/payloads';
+import { addDays, addMonths, today } from '../../../src/utils/dates';
+import { TEST_RUN_ID, randDigits, randInt, textOfLength, uuid } from '../../../src/utils/test-run';
+import { xlsxDataRows } from '../../../src/utils/file-check';
+import { schemas } from '../../../src/api/schemas/lead.schema';
+test.describe("Tạo Lead", () => {
+  const API = "POST /api/leads";
+  test("LEAD-028 Gửi lại cùng request", { tag: ["@api", "@p2"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const T = roles.nvkdA.accessToken;
+    const json = await seed.leadBody();
+    expect([200, 201]).toContain((await http.call(API, { token: T, json })).status());
+    expect((await http.call(API, { token: T, json })).status()).toBe(409);
+    expect(await seed.leadsByTax(json.taxCode as string)).toHaveLength(1);
+  });
+  test("LEAD-029 2 request cùng MST gửi đồng thời", { tag: ["@api", "@p2"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const T = roles.nvkdA.accessToken;
+    const json = await seed.leadBody();
+    const results = await Promise.all([http.call(API, { token: T, json }), http.call(API, { token: T, json })]);
+    const codes = results.map((r) => r.status()).sort();
+    expect(codes.filter((c) => c === 200 || c === 201)).toHaveLength(1);
+    expect(codes).toContain(409);
+    expect(await seed.leadsByTax(json.taxCode as string)).toHaveLength(1);
+  });
+});

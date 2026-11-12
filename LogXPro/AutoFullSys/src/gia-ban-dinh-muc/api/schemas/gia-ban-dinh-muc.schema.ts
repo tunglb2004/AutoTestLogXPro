@@ -1,0 +1,28 @@
+import { z } from 'zod';
+
+/** Schema response của các API mục "Giá bán định mức (SSP)", sinh từ Swagger (API.txt). Field không bắt buộc trong Swagger được phép null. */
+const S: Record<string, z.ZodTypeAny> = {};
+S["ApiListStandardSellingPriceGroup"] = z.lazy(() => z.object({ "items": z.array(S["StandardSellingPriceGroup"]).nullish(), "meta": S["Meta"].nullish() }).passthrough());
+S["ApiListStandardSellingPriceSummary"] = z.lazy(() => z.object({ "items": z.array(S["StandardSellingPriceSummary"]).nullish(), "meta": S["Meta"].nullish() }).passthrough());
+S["StandardSellingPriceSummary"] = z.lazy(() => z.object({ "id": z.string().nullish(), "code": z.string().nullish(), "standardBuyingPriceId": z.string().nullish(), "standardBuyingPriceCode": z.string().nullish(), "priceConfigurationItemId": z.string().nullish(), "priceConfigurationItemCode": z.string().nullish(), "priceConfigurationItemName": z.string().nullish(), "serviceTypeCode": z.string().nullish(), "serviceTypeName": z.string().nullish(), "priceTypeName": z.string().nullish(), "originPointName": z.string().nullish(), "destinationPointName": z.string().nullish(), "warehouseName": z.string().nullish(), "warehouseTypeName": z.string().nullish(), "customsOfficeName": z.string().nullish(), "tradeTypeName": z.string().nullish(), "transloadPointName": z.string().nullish(), "transloadMethodName": z.string().nullish(), "cargoNatureName": z.string().nullish(), "vehicleTypeName": z.string().nullish(), "cargoGroupName": z.string().nullish(), "unitCode": z.string().nullish(), "unitName": z.string().nullish(), "currency": z.string().nullish(), "benchmarkPrice": z.number().nullish(), "sellingPrice": z.number().nullish(), "profitPercent": z.number().nullish(), "sellingPriceSet": z.boolean().nullish(), "needsAttention": z.boolean().nullish() }).passthrough());
+S["SellingPriceUpdateResult"] = z.lazy(() => z.object({ "updated": z.array(S["StandardSellingPriceSummary"]).nullish(), "unchanged": z.array(z.string()).nullish(), "missing": z.array(z.string()).nullish(), "deactivated": z.array(z.string()).nullish() }).passthrough());
+S["ApiListAuditEntry"] = z.lazy(() => z.object({ "items": z.array(S["AuditEntry"]).nullish(), "meta": S["Meta"].nullish() }).passthrough());
+S["StandardSellingPriceGroup"] = z.lazy(() => z.object({ "priceConfigurationItemId": z.string().nullish(), "code": z.string().nullish(), "name": z.string().nullish(), "priceTypeName": z.string().nullish(), "rowCount": z.number().nullish() }).passthrough());
+S["Meta"] = z.lazy(() => z.object({ "pagination": S["Pagination"].nullish() }).passthrough());
+S["AuditEntry"] = z.lazy(() => z.object({ "id": z.string().nullish(), "at": z.string().nullish(), "actorUserId": z.string().nullish(), "actorEmail": z.string().nullish(), "actorName": z.string().nullish(), "actorEmployeeCode": z.string().nullish(), "action": z.string().nullish(), "summary": z.string().nullish(), "targetEntity": z.string().nullish(), "targetId": z.string().nullish(), "oldValue": S["JsonNode"].nullish(), "newValue": S["JsonNode"].nullish(), "event": z.string().nullish(), "eventLabel": z.string().nullish(), "summaryHtml": z.string().nullish() }).passthrough());
+S["Pagination"] = z.lazy(() => z.object({ "total": z.number().nullish(), "perPage": z.number().nullish(), "currentPage": z.number().nullish(), "totalPages": z.number().nullish() }).passthrough());
+S["JsonNode"] = z.lazy(() => z.object({ "valueNode": z.boolean().nullish(), "container": z.boolean().nullish(), "missingNode": z.boolean().nullish(), "object": z.boolean().nullish(), "nodeType": z.enum(["ARRAY", "BINARY", "BOOLEAN", "MISSING", "NULL", "NUMBER", "OBJECT", "POJO", "STRING"]).nullish(), "string": z.boolean().nullish(), "integralNumber": z.boolean().nullish(), "pojo": z.boolean().nullish(), "floatingPointNumber": z.boolean().nullish(), "short": z.boolean().nullish(), "int": z.boolean().nullish(), "long": z.boolean().nullish(), "double": z.boolean().nullish(), "bigDecimal": z.boolean().nullish(), "bigInteger": z.boolean().nullish(), "textual": z.boolean().nullish(), "boolean": z.boolean().nullish(), "binary": z.boolean().nullish(), "array": z.boolean().nullish(), "empty": z.boolean().nullish(), "null": z.boolean().nullish(), "float": z.boolean().nullish(), "number": z.boolean().nullish(), "embeddedValue": z.boolean().nullish() }).passthrough());
+
+/** Vỏ phản hồi thành công theo Swagger. */
+export const envelope = z.object({ success: z.literal(true), message: z.string().nullish(), errorCode: z.string().nullish(), data: z.any() }).passthrough();
+
+/** Theo API: mã thành công, loại nội dung và schema của `data` (null nếu không có body). */
+export const responses: Record<string, { status: number | null; contentType: string; data: z.ZodTypeAny | null }> = {
+  "GET /api/standard-selling-prices/groups": { status: 200, contentType: "*/*", data: S["ApiListStandardSellingPriceGroup"] },
+  "GET /api/standard-selling-prices": { status: 200, contentType: "*/*", data: S["ApiListStandardSellingPriceSummary"] },
+  "GET /api/standard-selling-prices/{id}": { status: 200, contentType: "*/*", data: S["StandardSellingPriceSummary"] },
+  "PUT /api/standard-selling-prices/{id}/selling-price": { status: 200, contentType: "*/*", data: S["StandardSellingPriceSummary"] },
+  "PUT /api/standard-selling-prices/selling-prices": { status: 200, contentType: "*/*", data: S["SellingPriceUpdateResult"] },
+  "POST /api/standard-selling-prices/{id}/acknowledgement": { status: 200, contentType: "*/*", data: S["StandardSellingPriceSummary"] },
+  "GET /api/standard-selling-prices/{id}/history": { status: 200, contentType: "*/*", data: S["ApiListAuditEntry"] },
+};

@@ -1,0 +1,24 @@
+{
+  "name": "logxpro-auto-full-sys",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Auto test Playwright cho LogXPro toàn hệ thống (trừ Lead, Khách hàng, HĐ khách hàng, Nhà thầu, HĐ nhà thầu, Danh mục)",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node tools/run-test.mjs",
+    "test:api": "node tools/run-test.mjs tests/api --name api",
+    "test:flows": "node tools/run-test.mjs tests/flows --name flows",
+    "test:ui": "node tools/run-test.mjs tests/ui --name ui",
+    "test:smoke": "node tools/run-test.mjs --grep \"@p1\" --name smoke",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.1",
+    "@playwright/test": "1.52.0",
+    "@types/node": "22.15.3",
+    "dotenv": "16.5.0",
+    "exceljs": "4.4.0",
+    "typescript": "5.8.3",
+    "zod": "3.24.4"
+  }
+}

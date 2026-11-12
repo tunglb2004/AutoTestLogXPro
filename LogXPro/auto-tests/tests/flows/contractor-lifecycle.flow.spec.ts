@@ -1,0 +1,135 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+import { test, expect } from '../../src/fixtures/seed.fixture';
+import { body, data, items, jsonPart } from '../../src/api/http.client';
+import { badTokens } from '../../src/fixtures/auth.fixture';
+import { apiError, apiSuccess, hasNoStacktrace } from '../../src/api/schemas/common.schema';
+import { sha256 } from '../../src/utils/file-check';
+import { malformedJson } from '../../src/data/payloads';
+import * as F from '../../src/data/file.factory';
+import * as L from '../../src/data/lead.factory';
+import * as C from '../../src/data/contract.factory';
+import * as K from '../../src/data/customer.factory';
+import * as V from '../../src/data/contractor.factory';
+import * as VC from '../../src/data/contractor-contract.factory';
+import * as P from '../../src/data/payloads';
+import { addDays, addMonths, today } from '../../src/utils/dates';
+import { TEST_RUN_ID, randDigits, randInt, textOfLength, uuid } from '../../src/utils/test-run';
+import { xlsxDataRows } from '../../src/utils/file-check';
+
+test.describe("Nhà thầu → Hợp đồng nhà thầu", () => {
+  test("FLOW-VDR-001 Tạo nhà thầu, hoàn thiện hồ sơ và thêm HĐ đầu tiên hiệu lực hôm nay", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const v = await test.step('Tạo nhà thầu và hoàn thiện hồ sơ', async () => {
+      const r = await http.call('POST /api/contractors', { token: Q, json: await seed.contractorBody() });
+      expect(r.status()).toBe(201);
+      const d = await data(r);
+      expect((await http.call('POST /api/contractors/{id}/documents', { token: Q, params: { id: d.id }, multipart: { file: F.pdf() } })).status()).toBe(201);
+      expect((await http.call('PUT /api/contractors/{id}', { token: Q, params: { id: d.id }, json: V.contractorUpdateBody(await seed.getContractor(d.id), { capabilityDescription: 'Bổ sung kho lạnh' }) })).status()).toBe(200);
+      expect((await http.call('POST /api/contractors/{id}/contacts', { token: Q, params: { id: d.id }, json: L.contactBody() })).status()).toBe(201);
+      expect((await http.call('PUT /api/contractors/{id}/tier', { token: Q, params: { id: d.id }, json: { tier: V.tierB(), reason: V.REASON } })).status()).toBe(200);
+      return d;
+    });
+    await test.step('Thêm HĐ đầu tiên', async () => {
+      const opts = items(await data(await http.call('GET /api/contractor-contracts/contractor-options', { token: Q, query: { mode: 'NEW', search: v.taxCode } })));
+      expect(opts.map((o: any) => o.contractorId)).toContain(v.id);
+      expect([200, 201]).toContain((await http.call('POST /api/contractor-contracts', { token: Q, multipart: { contract: jsonPart('contract', VC.newContractorContract(v.id)), file: F.pdf() } })).status());
+    });
+    const after = await data(await http.call('GET /api/contractors/{id}', { token: Q, params: { id: v.id } }));
+    expect(after.status.code).toBe('ACTIVE');
+    expect(after.tier.code).toBe(V.tierB());
+    expect(after.documents).toHaveLength(1);
+    expect(after.contacts).toHaveLength(2);
+    expect(after.contracts).toHaveLength(1);
+    const opts2 = items(await data(await http.call('GET /api/contractor-contracts/contractor-options', { token: Q, query: { mode: 'NEW', search: v.taxCode } })));
+    expect(opts2.map((o: any) => o.contractorId)).not.toContain(v.id);
+  });
+  test("FLOW-VDR-002 Xóa nhà thầu tạo nhầm", { tag: ["@flow", "@p2"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const r = await http.call('POST /api/contractors', { token: Q, json: await seed.contractorBody() });
+    expect(r.status()).toBe(201);
+    const v = await data(r);
+    expect((await http.call('DELETE /api/contractors/{id}', { token: Q, params: { id: v.id } })).status()).toBe(204);
+    expect((await http.call('GET /api/contractors/{id}', { token: Q, params: { id: v.id } })).status()).toBe(404);
+    expect((await http.call('POST /api/contractors', { token: Q, json: await seed.contractorBody({ taxCode: v.taxCode }) })).status()).toBe(201);
+  });
+  test("FLOW-VDR-003 HĐ chưa hiệu lực bị hủy, nhà thầu không xóa được nữa", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const v = await seed.contractor();
+    const r = await http.call('POST /api/contractor-contracts', { token: Q, multipart: { contract: jsonPart('contract', VC.newContractorContract(v.id, { effectiveFrom: addDays(today(), 10) })), file: F.pdf() } });
+    expect([200, 201]).toContain(r.status());
+    const k = await data(r);
+    expect((await http.call('PUT /api/contractor-contracts/{id}/auto-renewal', { token: Q, params: { id: k.id }, json: { enabled: true, cycleMonths: 6 } })).status()).toBe(200);
+    expect((await http.call('POST /api/contractor-contracts/{id}/cancel', { token: Q, params: { id: k.id }, json: { reason: 'Nhà thầu rút' } })).status()).toBe(200);
+    expect((await seed.getContractorContract(k.id)).status.code).toBe('CANCELLED');
+    expect((await data(await http.call('GET /api/contractors/{id}', { token: Q, params: { id: v.id } }))).status.code).toBe('NEW');
+    expect([400, 409]).toContain((await http.call('DELETE /api/contractors/{id}', { token: Q, params: { id: v.id } })).status());
+  });
+  test("FLOW-VDR-004 Gia hạn rồi tái ký thay thế", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.contractorWithContract({ extra: { autoRenew: true, renewalCycleMonths: 6 } });
+    expect((await http.call('POST /api/contractor-contracts/{id}/extensions', { token: Q, params: { id: c.contract.id }, json: { newExpiry: addMonths(c.contract.effectiveTo, 6) } })).status()).toBe(200);
+    const opts = items(await data(await http.call('GET /api/contractor-contracts/contractor-options', { token: Q, query: { mode: 'RESIGN', search: c.contractor.taxCode } })));
+    expect(opts.map((o: any) => o.contractorId)).toContain(c.contractor.id);
+    const r = await http.call('POST /api/contractor-contracts/{id}/resign', { token: Q, params: { id: c.contract.id }, multipart: { contract: jsonPart('contract', { ...VC.resignContractorContract(today()), confirmReplacement: true }), file: F.pdf() } });
+    expect([200, 201]).toContain(r.status());
+    const nk = await data(r);
+    const old = await data(await http.call('GET /api/contractor-contracts/{id}', { token: Q, params: { id: c.contract.id } }));
+    expect(old.status.code).toBe('SUSPENDED');
+    expect((await seed.getContractorContract(nk.id)).status.code).toBe('ACTIVE');
+    expect(nk.resignedFrom?.id).toBe(c.contract.id);
+    expect((await seed.getContractor(c.contractor.id)).status.code).toBe('ACTIVE');
+  });
+  test("FLOW-VDR-005 Dừng khai thác HĐ duy nhất làm nhà thầu Ngưng hoạt động", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.contractorWithContract();
+    expect((await http.call('POST /api/contractor-contracts/{id}/suspend', { token: Q, params: { id: c.contract.id }, json: { reason: 'Vi phạm' } })).status()).toBe(200);
+    expect((await data(await http.call('GET /api/contractors/{id}', { token: Q, params: { id: c.contractor.id } }))).status.code).toBe('SUSPENDED');
+    const opts = items(await data(await http.call('GET /api/contractor-contracts/contractor-options', { token: Q, query: { mode: 'RESIGN', search: c.contractor.taxCode } })));
+    expect(opts.map((o: any) => o.contractorId)).toContain(c.contractor.id);
+  });
+  test("FLOW-VDR-006 Dừng hợp tác rồi kích hoạt lại", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.contractorWithContract();
+    const pend = await data(await http.call('POST /api/contractor-contracts/{id}/resign', { token: Q, params: { id: c.contract.id }, multipart: { contract: jsonPart('contract', VC.resignContractorContract(addDays(c.contract.effectiveTo, 1))), file: F.pdf() } }));
+    expect((await http.call('POST /api/contractors/{id}/terminate', { token: Q, params: { id: c.contractor.id }, json: { reason: 'Vi phạm' } })).status()).toBe(200);
+    expect((await data(await http.call('GET /api/contractors/{id}', { token: Q, params: { id: c.contractor.id } }))).status.code).toBe('TERMINATED');
+    expect((await seed.getContractorContract(c.contract.id)).status.code).toBe('SUSPENDED');
+    expect((await seed.getContractorContract(pend.id)).status.code).toBe('CANCELLED');
+    expect([400, 409]).toContain((await http.call('PUT /api/contractors/{id}', { token: Q, params: { id: c.contractor.id }, json: V.contractorUpdateBody(await seed.getContractor(c.contractor.id)) })).status());
+    expect((await http.call('POST /api/contractors/{id}/reactivate', { token: Q, params: { id: c.contractor.id }, json: { reason: 'Hợp tác lại' } })).status()).toBe(200);
+    expect((await data(await http.call('GET /api/contractors/{id}', { token: Q, params: { id: c.contractor.id } }))).status.code).toBe('SUSPENDED');
+    expect((await seed.getContractorContract(c.contract.id)).status.code).toBe('SUSPENDED');
+  });
+  test("FLOW-VDR-007 Dừng hợp tác: kiểm từng HĐ và gọi trực tiếp API ghi bị khóa, rồi kích hoạt lại", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.contractorWithContract();
+    const pend = await data(await http.call('POST /api/contractor-contracts/{id}/resign', { token: Q, params: { id: c.contract.id }, multipart: { contract: jsonPart('contract', VC.resignContractorContract(addDays(c.contract.effectiveTo, 1))), file: F.pdf() } }));
+    const cancelled = await seed.contractorWithContract({ pending: true });
+    expect((await http.call('POST /api/contractors/{id}/terminate', { token: Q, params: { id: c.contractor.id }, json: { reason: 'Vi phạm' } })).status()).toBe(200);
+    const statuses = async () => [await seed.getContractorContract(c.contract.id), await seed.getContractorContract(pend.id)].map((x) => x.status.code);
+    expect(await statuses()).toEqual(['SUSPENDED', 'CANCELLED']);
+    const k = await data(await http.call('GET /api/contractor-contracts/{id}', { token: Q, params: { id: c.contract.id } }));
+    expect([400, 409]).toContain((await http.call('PUT /api/contractor-contracts/{id}', { token: Q, params: { id: k.id }, json: VC.updateContractorContract(k, { name: 'Không được sửa' }) })).status());
+    expect([400, 409]).toContain((await http.call('POST /api/contractor-contracts/{id}/annexes', { token: Q, params: { id: k.id }, multipart: { annex: jsonPart('annex', C.annexMeta()), file: F.pdf() } })).status());
+    expect([400, 409]).toContain((await http.call('POST /api/contractor-contracts/{id}/extensions', { token: Q, params: { id: k.id }, json: { newExpiry: addDays(k.effectiveTo, 30) } })).status());
+    expect([400, 409]).toContain((await http.call('POST /api/contractor-contracts/{id}/suspend', { token: Q, params: { id: k.id }, json: { reason: 'Vi phạm' } })).status());
+    expect((await http.call('GET /api/contractor-contracts/{id}/file', { token: Q, params: { id: k.id } })).status()).toBe(200);
+    expect((await http.call('POST /api/contractors/{id}/reactivate', { token: Q, params: { id: c.contractor.id }, json: { reason: 'Hợp tác lại' } })).status()).toBe(200);
+    expect(await statuses()).toEqual(['SUSPENDED', 'CANCELLED']);
+    expect(cancelled.contract.id).toBeTruthy();
+  });
+});

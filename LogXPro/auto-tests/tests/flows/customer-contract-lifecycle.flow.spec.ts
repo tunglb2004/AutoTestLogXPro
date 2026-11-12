@@ -1,0 +1,100 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+import { test, expect } from '../../src/fixtures/seed.fixture';
+import { body, data, items, jsonPart } from '../../src/api/http.client';
+import { badTokens } from '../../src/fixtures/auth.fixture';
+import { apiError, apiSuccess, hasNoStacktrace } from '../../src/api/schemas/common.schema';
+import { sha256 } from '../../src/utils/file-check';
+import { malformedJson } from '../../src/data/payloads';
+import * as F from '../../src/data/file.factory';
+import * as L from '../../src/data/lead.factory';
+import * as C from '../../src/data/contract.factory';
+import * as K from '../../src/data/customer.factory';
+import * as V from '../../src/data/contractor.factory';
+import * as VC from '../../src/data/contractor-contract.factory';
+import * as P from '../../src/data/payloads';
+import { addDays, addMonths, today } from '../../src/utils/dates';
+import { TEST_RUN_ID, randDigits, randInt, textOfLength, uuid } from '../../src/utils/test-run';
+import { xlsxDataRows } from '../../src/utils/file-check';
+
+test.describe("Vòng đời hợp đồng khách hàng", () => {
+  test("FLOW-CTR-001 Sửa HĐ và quản lý phụ lục không đổi trạng thái", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.customer();
+    const cur = await data(await http.call('GET /api/contracts/{id}', { token: D, params: { id: c.contract.id } }));
+    const h0 = (await seed.history('/api/contracts', c.contract.id, 'dvkhA')).length;
+    expect((await http.call('PUT /api/contracts/{id}', { token: D, params: { id: c.contract.id }, json: C.updateContract(cur, { paymentTermDays: 45 }) })).status()).toBe(200);
+    expect([200, 201]).toContain((await http.call('POST /api/contracts/{id}/annexes', { token: D, params: { id: c.contract.id }, multipart: { annex: jsonPart('annex', C.annexMeta()), file: F.pdf() } })).status());
+    const annex = (await seed.getContract(c.contract.id)).annexes[0];
+    expect((await http.call('PUT /api/contracts/{id}/annexes/{annexId}', { token: D, params: { id: c.contract.id, annexId: annex.id }, json: C.annexMeta({ name: 'Phụ lục sửa' }) })).status()).toBe(200);
+    expect([200, 204]).toContain((await http.call('DELETE /api/contracts/{id}/annexes/{annexId}', { token: D, params: { id: c.contract.id, annexId: annex.id } })).status());
+    const after = await data(await http.call('GET /api/contracts/{id}', { token: D, params: { id: c.contract.id } }));
+    expect(after.status).toBe('ACTIVE');
+    expect(after.annexes).toHaveLength(0);
+    expect((await seed.history('/api/contracts', c.contract.id, 'dvkhA')).length - h0).toBeGreaterThanOrEqual(4);
+  });
+  test("FLOW-CTR-002 Kích hoạt HĐ chờ bằng cách sửa ngày", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.customer({ pending: true });
+    const cur = await seed.getContract(c.contract.id);
+    expect((await http.call('PUT /api/contracts/{id}', { token: D, params: { id: c.contract.id }, json: { ...C.updateContract(cur, { effectiveFrom: today(), signedOn: today() }), confirmActivation: true } })).status()).toBe(200);
+    expect((await data(await http.call('GET /api/contracts/{id}', { token: D, params: { id: c.contract.id } }))).status).toBe('ACTIVE');
+    expect((await data(await http.call('GET /api/customers/{id}', { token: D, params: { id: c.customerId } }))).status).toBe('ACTIVE');
+  });
+  test("FLOW-CTR-003 Hủy HĐ chờ là HĐ duy nhất", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.customer({ pending: true });
+    expect((await http.call('POST /api/contracts/{id}/cancel', { token: D, params: { id: c.contract.id }, json: { reason: 'Khách đổi ý' } })).status()).toBe(200);
+    const k = await data(await http.call('GET /api/contracts/{id}', { token: D, params: { id: c.contract.id } }));
+    expect(k.status).toBe('CANCELLED');
+    for (const a of ['EDIT', 'EXTEND', 'CANCEL', 'SUSPEND']) expect(k.availableActions ?? []).not.toContain(a);
+    const cus = await data(await http.call('GET /api/customers/{id}', { token: D, params: { id: c.customerId } }));
+    expect(cus.status).toBe('SUSPENDED');
+    expect(cus.suspendReason).toBe('NO_ACTIVE_CONTRACT');
+  });
+  test("FLOW-CTR-004 Dừng khai thác rồi tái ký để KH hoạt động lại", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.customer();
+    expect((await http.call('POST /api/contracts/{id}/suspend', { token: D, params: { id: c.contract.id }, json: { reason: 'Vi phạm thanh toán' } })).status()).toBe(200);
+    const k1 = await data(await http.call('GET /api/customers/{id}', { token: D, params: { id: c.customerId } }));
+    expect(k1.status).toBe('SUSPENDED');
+    expect(k1.suspendReason).toBe('CONTRACT_SUSPENDED');
+    const r = await http.call('POST /api/contracts/{id}/resign', { token: D, params: { id: c.contract.id }, multipart: { contract: jsonPart('contract', { ...C.resignContract(today()), confirmReplacement: true }), file: F.pdf('tai-ky.pdf') } });
+    expect([200, 201]).toContain(r.status());
+    const nc = await data(r);
+    expect(nc.status).toBe('ACTIVE');
+    expect(nc.resignedFrom?.id).toBe(c.contract.id);
+    expect((await data(await http.call('GET /api/customers/{id}', { token: D, params: { id: c.customerId } }))).status).toBe('ACTIVE');
+  });
+  test("FLOW-CTR-005 Tái ký thay thế HĐ đang hiệu lực", { tag: ["@flow", "@p1"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.customer();
+    const contract = C.resignContract(today());
+    expect((await http.call('POST /api/contracts/{id}/resign', { token: D, params: { id: c.contract.id }, multipart: { contract: jsonPart('contract', contract), file: F.pdf() } })).status()).toBe(409);
+    const r2 = await http.call('POST /api/contracts/{id}/resign', { token: D, params: { id: c.contract.id }, multipart: { contract: jsonPart('contract', { ...contract, confirmReplacement: true }), file: F.pdf() } });
+    expect([200, 201]).toContain(r2.status());
+    expect((await data(r2)).status).toBe('ACTIVE');
+    expect((await data(await http.call('GET /api/contracts/{id}', { token: D, params: { id: c.contract.id } }))).status).toBe('SUSPENDED');
+    expect((await seed.getCustomer(c.customerId)).status).toBe('ACTIVE');
+  });
+  test("FLOW-CTR-006 Gia hạn sau khi có HĐ tái ký chờ", { tag: ["@flow", "@p2"] }, async ({ http, seed, roles, leadApi, contractApi, customerApi, contractorApi, contractorContractApi }) => {
+    const N = roles.nvkdA.accessToken;
+    const D = roles.dvkhA.accessToken;
+    const Q = roles.qlnt.accessToken;
+    const c = await seed.customer();
+    const d0 = addDays(c.contract.effectiveTo, 60);
+    const r = await http.call('POST /api/contracts/{id}/resign', { token: D, params: { id: c.contract.id }, multipart: { contract: jsonPart('contract', C.resignContract(d0)), file: F.pdf() } });
+    expect([200, 201]).toContain(r.status());
+    expect((await http.call('POST /api/contracts/{id}/extensions', { token: D, params: { id: c.contract.id }, json: { newExpiry: addDays(d0, -1) } })).status()).toBe(200);
+    expect([400, 409]).toContain((await http.call('POST /api/contracts/{id}/extensions', { token: D, params: { id: c.contract.id }, json: { newExpiry: d0 } })).status());
+  });
+});
